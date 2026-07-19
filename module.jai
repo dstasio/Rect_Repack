@@ -7,17 +7,17 @@ Atlas :: struct {
     fill_mask: []u8;
 }
 
-pack :: () -> Atlas {
+make_atlas :: (width_: s32, height_: s32) -> Atlas {
     atlas: Atlas;
-    //atlas.width  = 2048;
-    //atlas.height = 2048;
-    atlas.width  = 128;
-    atlas.height = 128;
+    assert((width_ % 8) == 0);
+    //assert((height % 8) == 0);
+    atlas.width  = width_;
+    atlas.height = height_;
 
     using atlas;
 
-    pixels    = NewArray( atlas.width * atlas.height         , u8);
-    fill_mask = NewArray((atlas.width * atlas.height) / (8*8), u8);
+    pixels    = NewArray( atlas.width * atlas.height     , u8);
+    fill_mask = NewArray((atlas.width * atlas.height) / 8, u8); // Only the width is compressed
 
     print("pixels: %\nfill_mask: %\n", pixels.count, fill_mask.count);
 
@@ -26,12 +26,32 @@ pack :: () -> Atlas {
     pixels[500 + 52] = 128;
     pixels[500 + 53] = 128;
     pixels[500 + 54] = 128;
+    fill_mask[atlas.width / 8] = 0xF0;
 
+    return atlas;
+}
 
-    Mask_Bucket_Type     :: u32;
+Iter_Window :: struct {
+    x, y, w, h: int;
+}
+Iter_State__ :: struct {
+    x := 0;
+    y := 0;
+    can_advance := true;
+
+    current_window_x: int;
+    current_window_y: int;
+    current_window_w: int;
+    current_window_h: int;
+
+    windows     : [8]Iter_Window;
+    prev_windows: [8]Iter_Window;
+    is_good     : [8]bool;
+}
+
+add_rect :: (atlas: *Atlas, rect_w: int, rect_h: int, iteration_state: *Iter_State__) {
+    Mask_Bucket_Type     :: u8;
     BITS_PER_MASK_BUCKET :: size_of(Mask_Bucket_Type) * 8;
-    rect_w := 20;
-    rect_h := 25;
 
     rect_row_mask_slots   := cast(int, ceil(rect_w / cast(float, BITS_PER_MASK_BUCKET)) + 1); // 1 extra so that we can spill over when offsetting.
     rect_row_masks_buffer := NewArray(rect_row_mask_slots * BITS_PER_MASK_BUCKET, Mask_Bucket_Type,, temp);
@@ -68,6 +88,7 @@ pack :: () -> Atlas {
         }
     }
 
+    /*
     print("Masks for a rect of width %\n", rect_w);
     push_context {
         context.print_style.default_format_int.base           = 2;
@@ -76,14 +97,58 @@ pack :: () -> Atlas {
             print("mask % -> %\n", FormatInt.{value = it_index, base = 10, minimum_digits = 2}, mask);
         }
     }
+    */
 
-    x := 0;
-    y := 0;
+    x := iteration_state.x;
+    y := iteration_state.y;
     while x < atlas.width && y < atlas.height {
-        break;
+        if !iteration_state.can_advance break;
+        defer {
+            iteration_state.x = x;
+            iteration_state.y = y;
+            iteration_state.can_advance = false;
+        }
+
+        row_mask := rect_row_masks[0];
+
+        row_is_free := true;
+        for mask_bucket, mask_bucket_index: row_mask {
+            if mask_bucket == 0 {
+                iteration_state.windows[mask_bucket_index].w = 0;
+                iteration_state.windows[mask_bucket_index].h = 0;
+                continue;
+            }
+            iteration_state.windows[mask_bucket_index].x = (x + mask_bucket_index) * BITS_PER_MASK_BUCKET;
+            iteration_state.windows[mask_bucket_index].y = y;
+            iteration_state.windows[mask_bucket_index].w = BITS_PER_MASK_BUCKET;
+            iteration_state.windows[mask_bucket_index].h = 1;
+
+            occupancy_mask := atlas.fill_mask[y * atlas.width / BITS_PER_MASK_BUCKET + x + mask_bucket_index];
+
+            iteration_state.is_good[mask_bucket_index] = ((~occupancy_mask) & mask_bucket) == mask_bucket;
+            if ((~occupancy_mask) & mask_bucket) != mask_bucket {
+                row_is_free = false;
+                break mask_bucket;
+            }
+        }
+
+        if row_is_free {
+            iteration_state.prev_windows = iteration_state.windows;
+            y += 1;
+        } else {
+            x += 1;
+            y  = 0;
+        }
+
+        for mask_bucket, mask_bucket_index: row_mask {
+            if mask_bucket == 0 continue;
+            iteration_state.windows[mask_bucket_index].x = (x + mask_bucket_index) * BITS_PER_MASK_BUCKET;
+            iteration_state.windows[mask_bucket_index].y = y;
+            iteration_state.windows[mask_bucket_index].w = BITS_PER_MASK_BUCKET;
+            iteration_state.windows[mask_bucket_index].h = 1;
+        }
     }
 
-    return atlas;
 }
 
 #import "Basic";
