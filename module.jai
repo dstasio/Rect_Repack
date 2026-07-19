@@ -21,13 +21,6 @@ make_atlas :: (width_: s32, height_: s32) -> Atlas {
 
     print("pixels: %\nfill_mask: %\n", pixels.count, fill_mask.count);
 
-    pixels[500 + 50] = 85;
-    pixels[500 + 51] = 90;
-    pixels[500 + 52] = 128;
-    pixels[500 + 53] = 128;
-    pixels[500 + 54] = 128;
-    fill_mask[atlas.width / 8] = 0xF0;
-
     return atlas;
 }
 
@@ -37,7 +30,11 @@ Iter_Window :: struct {
 Iter_State__ :: struct {
     x := 0;
     y := 0;
-    can_advance := true;
+    can_advance  := true;
+    can_complete := false;
+
+    candidate_x := 0;
+    candidate_y := 0;
 
     current_window_x: int;
     current_window_y: int;
@@ -49,7 +46,7 @@ Iter_State__ :: struct {
     is_good     : [8]bool;
 }
 
-add_rect :: (atlas: *Atlas, rect_w: int, rect_h: int, iteration_state: *Iter_State__) {
+add_rect :: (atlas: *Atlas, rect_w: int, rect_h: int, iteration_state: *Iter_State__) -> success := false, x := 0, y := 0 {
     Mask_Bucket_Type     :: u8;
     BITS_PER_MASK_BUCKET :: size_of(Mask_Bucket_Type) * 8;
 
@@ -101,12 +98,14 @@ add_rect :: (atlas: *Atlas, rect_w: int, rect_h: int, iteration_state: *Iter_Sta
 
     x := iteration_state.x;
     y := iteration_state.y;
-    while x < atlas.width && y < atlas.height {
+    candidate_x := iteration_state.candidate_x;
+    candidate_y := iteration_state.candidate_y;
+    while y < atlas.height {
         if !iteration_state.can_advance break;
         defer {
             iteration_state.x = x;
             iteration_state.y = y;
-            iteration_state.can_advance = false;
+            iteration_state.can_advance = iteration_state.can_complete;
         }
 
         row_mask := rect_row_masks[0];
@@ -123,6 +122,10 @@ add_rect :: (atlas: *Atlas, rect_w: int, rect_h: int, iteration_state: *Iter_Sta
             iteration_state.windows[mask_bucket_index].w = BITS_PER_MASK_BUCKET;
             iteration_state.windows[mask_bucket_index].h = 1;
 
+            if (x + mask_bucket_index) * BITS_PER_MASK_BUCKET > atlas.width-1 {
+                row_is_free = false;
+                break mask_bucket;
+            }
             occupancy_mask := atlas.fill_mask[y * atlas.width / BITS_PER_MASK_BUCKET + x + mask_bucket_index];
 
             iteration_state.is_good[mask_bucket_index] = ((~occupancy_mask) & mask_bucket) == mask_bucket;
@@ -134,10 +137,36 @@ add_rect :: (atlas: *Atlas, rect_w: int, rect_h: int, iteration_state: *Iter_Sta
 
         if row_is_free {
             iteration_state.prev_windows = iteration_state.windows;
-            y += 1;
+            
+            if (y - candidate_y) == rect_h {
+                // Done. We can put the rectangle here.
+                iteration_state.* = .{};
+
+                for yy: candidate_y..y-1
+                for mask_bucket, mask_bucket_index: row_mask {
+                    if mask_bucket == 0 continue;
+                    atlas.fill_mask[yy * atlas.width / BITS_PER_MASK_BUCKET + x + mask_bucket_index] |= mask_bucket;
+                }
+
+                x = 0;
+                y = 0;
+
+                return true, candidate_x * BITS_PER_MASK_BUCKET, candidate_y;
+            } else {
+                y += 1;
+            }
         } else {
             x += 1;
-            y  = 0;
+            y  = candidate_y;
+            if x * BITS_PER_MASK_BUCKET > atlas.width {
+                x = 0;
+                y += 1;
+            }
+            candidate_x = x;
+            candidate_y = y;
+
+            iteration_state.candidate_x = candidate_x;
+            iteration_state.candidate_y = candidate_y;
         }
 
         for mask_bucket, mask_bucket_index: row_mask {
@@ -149,6 +178,7 @@ add_rect :: (atlas: *Atlas, rect_w: int, rect_h: int, iteration_state: *Iter_Sta
         }
     }
 
+    return;
 }
 
 #import "Basic";
