@@ -117,12 +117,8 @@ draw_one_frame :: () {
 }
 
 my_init_fonts :: () {
-    // So that we can load our font, set to path of running executable.
-    // @Incomplete: Pack a default font into Simp.
-
     pixel_height := window_height / 24;
 
-    // @Cleanup: Don't have path + name be separate.
     my_font = Simp.get_font_at_size(".", "OpenSans-BoldItalic.ttf", pixel_height);
     assert(my_font != null);
 }
