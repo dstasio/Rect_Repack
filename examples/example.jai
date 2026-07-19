@@ -60,6 +60,10 @@ main :: () {
                 if it.key_pressed && it.key_code == .SPACEBAR {
                     iter.can_advance = true;
                 }
+                if it.key_pressed && it.key_code == .ENTER {
+                    iter.can_complete = true;
+                    iter.can_advance  = true;
+                }
             }
         }
 
@@ -72,6 +76,13 @@ main :: () {
 
 iter: Iter_State__;
 pixel_render_size: float;
+Rect :: struct {
+    x, y: int;
+    w, h: int;
+}
+
+current_rect: Rect;
+placed_rects: [..]Rect;
 
 draw_one_frame :: () {
     Simp.clear_render_target(.9, .9, .9, 1);
@@ -80,7 +91,19 @@ draw_one_frame :: () {
 
     time := seconds_since_init();
 
-    add_rect(*atlas, 20, 25, *iter);
+    if current_rect.w == 0 {
+        current_rect.w = get_test_number();
+        current_rect.h = get_test_number();
+        print("Packing a rectangle of size %x%\n", current_rect.w, current_rect.h);
+    }
+    success:, current_rect.x, current_rect.y = add_rect(*atlas, current_rect.w, current_rect.h, *iter);
+
+    if success {
+        array_add(*placed_rects, current_rect);
+        current_rect.w = get_test_number();
+        current_rect.h = get_test_number();
+        print("Packing a rectangle of size %x%\n", current_rect.w, current_rect.h);
+    }
 
     pixel_render_size = cast(float, min(window_width, window_height)) / atlas.width;
 
@@ -111,6 +134,16 @@ draw_one_frame :: () {
         draw_line(p0, p1, grid_color, 1);
     }
 
+    for y: 0..atlas.height-1
+    for x: 0..atlas.width-1 {
+        x_ := x / 8;
+        xm := x % 8;
+        fill := atlas.fill_mask[y * atlas.width / 8 + x_];
+
+        if fill & (1 << (7 - xm))
+            then draw_pixels(x, y, color = Vector4.{0, 0, 0, 0.2});
+    }
+
     for window: iter.windows {
         color_current := Vector4.{0.2, 0.5, 0.8, 0.2};
 
@@ -127,6 +160,11 @@ draw_one_frame :: () {
         if it_index % 2
             then color.w *= 0.5;
         draw_pixels(window.x, window.y, window.w, window.h, color);
+    }
+
+    for placed_rects {
+        color := test_colors[it_index % test_colors.count];
+        draw_pixels(it.x, it.y, it.w, it.h, color, 0.4);
     }
 
     Simp.immediate_flush();
@@ -165,4 +203,38 @@ draw_line :: (p0: Vector2, p1: Vector2, color: Vector4, thickness := 3.0) {
     d := p1 - tn;
 
     Simp.immediate_quad(a, b, c, d, color);
+}
+
+test_colors := Vector4.[
+    .{219./255, 254./255, 135./255, 1},
+    .{255./255, 227./255, 129./255, 1},
+    .{206./255, 194./255, 136./255, 1},
+    .{111./255, 134./255, 149./255, 1},
+    .{ 28./255,  68./255, 142./255, 1},
+    .{239./255, 118./255, 122./255, 1},
+    .{ 69./255, 105./255, 144./255, 1},
+    .{ 73./255, 190./255, 170./255, 1},
+    .{ 73./255, 220./255, 177./255, 1},
+    .{238./255, 184./255, 104./255, 1},
+];
+
+test_numbers :: int.[
+    37, 13,   16, 45,   29,  9,   43, 31,   43, 37,
+    25, 14,   38, 45,    5, 17,   38, 17,   45,  8,
+    15, 25,   40, 39,   34, 35,   20, 13,    7, 43,
+    19, 18,   47,  6,   25, 27,   10, 11,   29, 44,
+    35, 47,   36, 48,   48, 27,    8, 39,   48, 14,
+    21, 14,   38, 10,   39, 15,   22, 38,   34,  6,
+    37, 13,   27, 44,   12, 40,   34, 26,   47, 29,
+    50, 12,   31, 13,   21, 27,    7,  8,   32, 25,
+    44, 44,   22, 46,   40, 12,   19, 50,   34, 17,
+    42, 46,   10, 32,   50, 43,   33, 36,   12, 37,
+    21, 47,   29,  8,   28, 49,   13, 17,   49, 14,
+    17, 45,   36, 13,   45, 46,   41, 42,   13, 40,
+    42, 49,   34, 35,   27, 47,   17, 40,
+];
+test_number_index := 0;
+get_test_number :: () -> int {
+    defer test_number_index += 1;
+    return test_numbers[test_number_index];
 }
