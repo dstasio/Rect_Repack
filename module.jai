@@ -4,22 +4,20 @@ Atlas :: struct {
     width:       s32;
     height:      s32;
     pixels:    []u8;
-    fill_mask: []u8;
+
+    fill_matrix: Spatial_Matrix(s32, Region_Fill, Uninitialized_Value = Region_Fill.Uninitialized);
 }
 
 make_atlas :: (width_: s32, height_: s32) -> Atlas {
-    atlas: Atlas;
-    assert((width_ % 8) == 0);
-    //assert((height % 8) == 0);
-    atlas.width  = width_;
-    atlas.height = height_;
+    using atlas: Atlas;
 
-    using atlas;
+    width  = width_;
+    height = height_;
 
-    pixels    = NewArray( atlas.width * atlas.height     , u8);
-    fill_mask = NewArray((atlas.width * atlas.height) / 8, u8); // Only the width is compressed
-
-    print("pixels: %\nfill_mask: %\n", pixels.count, fill_mask.count);
+    pixels = NewArray( atlas.width * atlas.height, u8);
+    reserve(*fill_matrix, width / 2, height / 2);
+    add_at(*fill_matrix, 0, 0, .Empty);
+    add_at(*fill_matrix, width, height, .Full);
 
     return atlas;
 }
@@ -28,158 +26,137 @@ Iter_Window :: struct {
     x, y, w, h: int;
 }
 Iter_State__ :: struct {
-    x := 0;
-    y := 0;
-    can_advance  := true;
+    can_advance  := false;
     can_complete := false;
+    searched_this_frame := false;
+    restarting   := false;
+    draw_fill_mask := false;
 
-    candidate_x := 0;
-    candidate_y := 0;
+    region: Region;
+    cursor: Cursor;
 
-    current_window_x: int;
-    current_window_y: int;
-    current_window_w: int;
-    current_window_h: int;
-
-    windows     : [8]Iter_Window;
-    prev_windows: [8]Iter_Window;
-    is_good     : [8]bool;
+    Region :: struct {
+        x0, y0: s32;
+        x1, y1: s32;
+    }
+    Cursor :: struct {
+        row , col  : int;
+        rows, cols := 0;
+    }
 }
 
-add_rect :: (atlas: *Atlas, rect_w: int, rect_h: int, iteration_state: *Iter_State__) -> success := false, x := 0, y := 0 {
-    Mask_Bucket_Type     :: u8;
-    BITS_PER_MASK_BUCKET :: size_of(Mask_Bucket_Type) * 8;
+add_rect :: (using atlas: *Atlas, rect_w: int, rect_h: int, using iteration_state: *Iter_State__) -> success := false, x := 0, y := 0 #no_abc {
+    Tolerance :: 5;
 
-    rect_row_mask_slots   := cast(int, ceil(rect_w / cast(float, BITS_PER_MASK_BUCKET)) + 1); // 1 extra so that we can spill over when offsetting.
-    rect_row_masks_buffer := NewArray(rect_row_mask_slots * BITS_PER_MASK_BUCKET, Mask_Bucket_Type,, temp);
+    //region: Region;
+    //cursor: Cursor;
 
-    rect_row_masks: [BITS_PER_MASK_BUCKET][]Mask_Bucket_Type;
-    for *mask, mask_index: rect_row_masks {
-        mask.data  = rect_row_masks_buffer.data + rect_row_mask_slots * mask_index;
-        mask.count = rect_row_mask_slots;
-
-        mask_shift := mask_index;
-
-        remaining_width  := rect_w;
-        mask_bucket_index := 0;
-
-        // start_bit is the leftmost bit. Indexed left-to-right.
-        // Maybe this is confusing.
-        start_bit := mask_shift;
-        end_bit   := start_bit + rect_w;
-        while remaining_width > 0 {
-            defer {
-                mask_bucket_index += 1;
-                start_bit = max(0, start_bit - BITS_PER_MASK_BUCKET);
-                end_bit   = max(0,   end_bit - BITS_PER_MASK_BUCKET);
-
-                if start_bit == end_bit break;
-            }
-
-            bits_to_set := min(end_bit, BITS_PER_MASK_BUCKET) - start_bit;
-
-            mask_pixel := cast,no_check(Mask_Bucket_Type, (1 << bits_to_set) - 1);
-            if end_bit <= BITS_PER_MASK_BUCKET
-                mask_pixel <<= BITS_PER_MASK_BUCKET - end_bit;
-            mask.*[mask_bucket_index] = mask_pixel;
-        }
-    }
-
-    /*
-    print("Masks for a rect of width %\n", rect_w);
-    push_context {
-        context.print_style.default_format_int.base           = 2;
-        context.print_style.default_format_int.minimum_digits = BITS_PER_MASK_BUCKET;
-        for mask: rect_row_masks {
-            print("mask % -> %\n", FormatInt.{value = it_index, base = 10, minimum_digits = 2}, mask);
-        }
-    }
-    */
-
-    x := iteration_state.x;
-    y := iteration_state.y;
-    candidate_x := iteration_state.candidate_x;
-    candidate_y := iteration_state.candidate_y;
-    while y < atlas.height {
-        if !iteration_state.can_advance break;
+    while outermost := true {
+        if !can_advance break;
         defer {
-            iteration_state.x = x;
-            iteration_state.y = y;
-            iteration_state.can_advance = iteration_state.can_complete;
+            if !can_complete
+                can_advance = false;
         }
+        searched_this_frame = false;
 
-        row_mask := rect_row_masks[0];
+        if restarting {
+            restarting = false;
+            cursor.col += cursor.cols;
 
-        row_is_free := true;
-        for mask_bucket, mask_bucket_index: row_mask {
-            if mask_bucket == 0 {
-                iteration_state.windows[mask_bucket_index].w = 0;
-                iteration_state.windows[mask_bucket_index].h = 0;
-                continue;
-            }
-            iteration_state.windows[mask_bucket_index].x = (x + mask_bucket_index) * BITS_PER_MASK_BUCKET;
-            iteration_state.windows[mask_bucket_index].y = y;
-            iteration_state.windows[mask_bucket_index].w = BITS_PER_MASK_BUCKET;
-            iteration_state.windows[mask_bucket_index].h = 1;
+            region = .{};
 
-            if (x + mask_bucket_index) * BITS_PER_MASK_BUCKET > atlas.width-1 {
-                row_is_free = false;
-                break mask_bucket;
-            }
-            occupancy_mask := atlas.fill_mask[y * atlas.width / BITS_PER_MASK_BUCKET + x + mask_bucket_index];
-
-            iteration_state.is_good[mask_bucket_index] = ((~occupancy_mask) & mask_bucket) == mask_bucket;
-            if ((~occupancy_mask) & mask_bucket) != mask_bucket {
-                row_is_free = false;
-                break mask_bucket;
-            }
-        }
-
-        if row_is_free {
-            iteration_state.prev_windows = iteration_state.windows;
-            
-            if (y - candidate_y) == rect_h {
-                // Done. We can put the rectangle here.
-                iteration_state.* = .{};
-
-                for yy: candidate_y..y-1
-                for mask_bucket, mask_bucket_index: row_mask {
-                    if mask_bucket == 0 continue;
-                    atlas.fill_mask[yy * atlas.width / BITS_PER_MASK_BUCKET + x + mask_bucket_index] |= mask_bucket;
+            cursor.rows = 0;
+            cursor.cols = 0;
+            if cursor.col >= fill_matrix.columns.count {
+                cursor.col = 0;
+                cursor.row += 1;
+                if cursor.row >= fill_matrix.rows.count {
+                    cursor = .{};
+                    return;
                 }
-
-                x = 0;
-                y = 0;
-
-                return true, candidate_x * BITS_PER_MASK_BUCKET, candidate_y;
-            } else {
-                y += 1;
             }
-        } else {
-            x += 1;
-            y  = candidate_y;
-            if x * BITS_PER_MASK_BUCKET > atlas.width {
-                x = 0;
-                y += 1;
-            }
-            candidate_x = x;
-            candidate_y = y;
-
-            iteration_state.candidate_x = candidate_x;
-            iteration_state.candidate_y = candidate_y;
         }
 
-        for mask_bucket, mask_bucket_index: row_mask {
-            if mask_bucket == 0 continue;
-            iteration_state.windows[mask_bucket_index].x = (x + mask_bucket_index) * BITS_PER_MASK_BUCKET;
-            iteration_state.windows[mask_bucket_index].y = y;
-            iteration_state.windows[mask_bucket_index].w = BITS_PER_MASK_BUCKET;
-            iteration_state.windows[mask_bucket_index].h = 1;
+        region.x0 = fill_matrix.columns[cursor.col];
+        region.y0 = fill_matrix.rows   [cursor.row];
+
+        cursor_pre_resize := cursor;
+
+        minimum_y1 := region.y0 + rect_h;
+        while region.y1 < minimum_y1 {
+            defer { searched_this_frame = true; if !can_complete break; }
+            cursor.rows += 1;
+
+            if (cursor.row + cursor.rows) >= fill_matrix.rows.count
+                break outermost;
+
+            region.y1 = fill_matrix.rows[cursor.row + cursor.rows];
+
+            for 0..cursor.cols-1
+            if fill_matrix[cursor.row + cursor.rows - 1][cursor.col + it] == .Full {
+                restarting = true;
+                continue outermost;
+            }
+
+            delta := (minimum_y1 - region.y1);
+            if delta > 0 && delta <= Tolerance {
+                //restarting = true;
+                //continue outermost;
+            }
         }
+
+        minimum_x1 := region.x0 + rect_w;
+        while region.x1 < minimum_x1 {
+            defer { searched_this_frame = true; if !can_complete break; }
+            cursor.cols += 1;
+
+            if (cursor.col + cursor.cols) >= fill_matrix.columns.count {
+                restarting = true;
+                continue outermost;
+            }
+
+            region.x1 = fill_matrix.columns[cursor.col + cursor.cols];
+
+            for 0..cursor.rows-1
+            if fill_matrix[cursor.row + it][cursor.col + cursor.cols - 1] == .Full {
+                restarting = true;
+                continue outermost;
+            }
+        }
+
+        if region.y1 < minimum_y1 || region.x1 < minimum_x1 {
+            return;
+        }
+        if searched_this_frame continue;
+
+        // We add the rect here.
+        add_at(*fill_matrix, xx (region.y0 + rect_h), xx (region.x0 + rect_w), .Empty, allow_replacing = false);
+
+        for cx: 0..cursor.cols-1 for cy: 0..cursor.rows-1 {
+            fill_matrix[cursor.row + cy][cursor.col + cx] = .Full;
+        }
+
+        defer {
+            region = .{};
+            cursor = .{};
+        }
+
+        can_complete = false;
+        return true, region.x0, region.y0;
     }
 
     return;
 }
+
+#scope_file
+Region_Fill :: enum s8 {
+    Empty :: 0;
+    Full  :: 1;
+
+    Uninitialized :: -1;
+}
+
+#load "spatial_matrix.jai";
 
 #import "Basic";
 #import "Math";

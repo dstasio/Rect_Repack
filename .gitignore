@@ -1,2 +1,7 @@
 *.swp
 .build/
+*.exe
+*.pdb
+*.rdi
+*.cpp
+*.h

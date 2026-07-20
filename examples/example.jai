@@ -7,7 +7,8 @@ window_height : s32 = 1920;
 atlas: Atlas;
 
 main :: () {
-    atlas = make_atlas(128, 128);
+    //atlas = make_atlas(128, 128);
+    atlas = make_atlas(1024, 1024);
 
     context.input_handler.window_proc = Input.MyWindowProc;
 
@@ -57,6 +58,9 @@ main :: () {
                 if it.key_pressed && it.key_code == .ENTER {
                     iter.can_complete = true;
                     iter.can_advance  = true;
+                }
+                if it.key_pressed && it.key_code == #char "F" {
+                    iter.draw_fill_mask = !iter.draw_fill_mask;
                 }
             }
         }
@@ -127,46 +131,54 @@ draw_one_frame :: () {
         p1.x, p1.y = p1.y, p1.x;
         draw_line(p0, p1, grid_color, 1);
     }
-
-    for y: 0..atlas.height-1
-    for x: 0..atlas.width-1 {
-        x_ := x / 8;
-        xm := x % 8;
-        fill := atlas.fill_mask[y * atlas.width / 8 + x_];
-
-        if fill & (1 << (7 - xm))
-            then draw_pixels(x, y, color = Vector4.{0, 0, 0, 0.2});
+    for atlas.fill_matrix.columns {
+        p0 := Vector2.{it * pixel_render_size, 0};
+        p1 := p0 + Vector2.{0, pixel_render_size * atlas.height};
+        draw_line(p0, p1, grid_color, 2);
     }
-
-    for window: iter.windows {
-        color_current := Vector4.{0.2, 0.5, 0.8, 0.2};
-
-        color := color_current;
-        if it_index % 2
-            then color.w *= 0.5;
-        draw_pixels(window.x, window.y, window.w, window.h, color);
-    }
-    for window: iter.prev_windows {
-        color_good := Vector4.{0.2, 0.9, 0.78, 0.2};
-        color_bad  := Vector4.{0.9, 0.3, 0.4, 0.2};
-
-        color := ifx iter.is_good[it_index] then color_good else color_bad;
-        if it_index % 2
-            then color.w *= 0.5;
-        draw_pixels(window.x, window.y, window.w, window.h, color);
+    for atlas.fill_matrix.rows {
+        p0 := Vector2.{0, it * pixel_render_size};
+        p1 := p0 + Vector2.{pixel_render_size * atlas.width, 0};
+        draw_line(p0, p1, grid_color, 2);
     }
 
     for placed_rects {
         color := test_colors[it_index % test_colors.count];
-        draw_pixels(it.x, it.y, it.w, it.h, color, 0.4);
+        draw_pixels(it.x, it.y, it.w, it.h, color, 0.5);
     }
+
+    if iter.draw_fill_mask for row: 0..atlas.fill_matrix.rows.count-2 {
+        for col: 0..atlas.fill_matrix.columns.count-2 {
+            v := atlas.fill_matrix[row][col];
+
+            if v != .Full
+                continue;
+
+            color := Vector4.{0.2, 0.1, .1, 0.5};
+            
+            x0 := atlas.fill_matrix.columns[col];
+            y0 := atlas.fill_matrix.rows   [row];
+            x1 := atlas.fill_matrix.columns[col + 1];
+            y1 := atlas.fill_matrix.rows   [row + 1];
+
+            draw_pixels(x0, y0, x1 - x0, y1 - y0, color);
+        }
+    }
+
+    {
+        using iter;
+        color := Vector4.{0.741, 0.243, 0.204, 1};
+        if !iter.restarting swap(*color.x, *color.z);
+        draw_quad_outline(region.x0, region.y0, region.x1, region.y1, color);
+    }
+
 
     Simp.immediate_flush();
     Simp.swap_buffers(my_window);
 }
 
 #run main();
-#run set_build_options_dc(.{do_output = false});
+//#run set_build_options_dc(.{do_output = false});
 
 #import "Compiler";
 
@@ -192,6 +204,17 @@ draw_line :: (p0: Vector2, p1: Vector2, color: Vector4, thickness := 3.0) {
     Simp.immediate_quad(a, b, c, d, color);
 }
 
+draw_quad_outline :: (x0: int, y0: int, x1: int, y1: int, color: Vector4, thickness := 2.0) {
+    _x0 := cast(float) x0 * pixel_render_size;
+    _x1 := cast(float) x1 * pixel_render_size;
+    _y0 := cast(float) y0 * pixel_render_size;
+    _y1 := cast(float) y1 * pixel_render_size;
+    draw_line(.{_x0, _y0}, .{_x1, _y0}, color, thickness);
+    draw_line(.{_x1, _y0}, .{_x1, _y1}, color, thickness);
+    draw_line(.{_x1, _y1}, .{_x0, _y1}, color, thickness);
+    draw_line(.{_x0, _y1}, .{_x0, _y0}, color, thickness);
+}
+
 test_colors := Vector4.[
     .{219./255, 254./255, 135./255, 1},
     .{255./255, 227./255, 129./255, 1},
@@ -205,6 +228,7 @@ test_colors := Vector4.[
     .{238./255, 184./255, 104./255, 1},
 ];
 
+/*
 test_numbers :: int.[
     37, 13,   16, 45,   29,  9,   43, 31,   43, 37,
     25, 14,   38, 45,    5, 17,   38, 17,   45,  8,
@@ -220,6 +244,63 @@ test_numbers :: int.[
     17, 45,   36, 13,   45, 46,   41, 42,   13, 40,
     42, 49,   34, 35,   27, 47,   17, 40,
 ];
+*/
+
+test_numbers :: int.[
+    34, 30,   36, 32,   31, 30,   33, 34,   35, 30,  
+    31, 31,   33, 36,   34, 30,   36, 30,   35, 30,  
+    35, 30,   31, 31,   32, 36,   31, 30,   35, 36,  
+    32, 33,   34, 33,   35, 31,   33, 32,   36, 36,  
+    32, 32,   36, 30,   33, 34,   31, 36,   30, 31,  
+    36, 31,   36, 34,   33, 33,   34, 32,   34, 35,  
+    30, 30,   32, 35,   34, 32,   32, 34,   33, 32,  
+    35, 31,   30, 33,   34, 35,   31, 33,   34, 30,  
+    35, 30,   30, 32,   36, 30,   31, 35,   31, 35,  
+    34, 33,   34, 30,   32, 34,   31, 33,   31, 36,  
+    36, 32,   34, 35,   31, 35,   34, 33,   30, 35,  
+    30, 34,   32, 30,   35, 30,   33, 36,   36, 32,  
+    34, 36,   34, 34,   31, 36,   35, 30,   30, 35,  
+    35, 34,   31, 35,   35, 30,   32, 33,   35, 31,  
+    34, 36,   34, 34,   32, 33,   32, 34,   34, 33,  
+    30, 34,   36, 33,   36, 36,   34, 36,   30, 33,  
+    34, 35,   34, 34,   35, 35,   30, 35,   32, 32,  
+    35, 36,   35, 34,   36, 34,   34, 31,   35, 33,  
+    36, 34,   34, 34,   30, 32,   30, 32,   33, 31,  
+    31, 30,   35, 32,   30, 33,   32, 36,   32, 34,  
+    31, 30,   36, 30,   30, 35,   36, 35,   30, 32,  
+    30, 33,   34, 34,   31, 33,   31, 36,   33, 35,  
+    33, 33,   34, 32,   36, 31,   34, 35,   30, 35,  
+    36, 34,   34, 36,   34, 34,   33, 34,   34, 35,  
+    35, 35,   36, 34,   34, 32,   34, 36,   31, 35,  
+    32, 32,   36, 35,   36, 32,   31, 32,   32, 35,  
+    33, 34,   31, 32,   35, 36,   36, 32,   32, 34,  
+    35, 36,   36, 34,   36, 30,   34, 33,   32, 34,  
+    33, 32,   34, 34,   32, 35,   33, 34,   30, 32,  
+    36, 31,   36, 31,   34, 32,   34, 33,   34, 33,  
+    30, 30,   36, 31,   36, 31,   34, 30,   32, 31,  
+    32, 30,   33, 33,   30, 35,   34, 30,   36, 34,  
+    36, 30,   31, 35,   30, 34,   33, 30,   30, 31,  
+    35, 32,   32, 30,   32, 36,   35, 33,   31, 32,  
+    34, 30,   32, 36,   31, 35,   36, 31,   35, 31,  
+    33, 34,   31, 34,   32, 34,   34, 30,   33, 34,  
+    35, 32,   32, 33,   31, 30,   30, 34,   33, 30,  
+    33, 30,   36, 35,   32, 33,   30, 36,   32, 32,  
+    30, 35,   30, 34,   32, 33,   30, 33,   34, 30,  
+    33, 32,   36, 34,   36, 34,   32, 35,   31, 30,  
+    36, 35,   34, 31,   30, 32,   34, 32,   30, 31,  
+    33, 36,   31, 32,   34, 35,   35, 31,   32, 35,  
+    33, 34,   35, 34,   30, 35,   34, 31,   35, 36,  
+    35, 34,   30, 33,   33, 32,   36, 31,   32, 36,  
+    35, 36,   31, 35,   30, 30,   36, 34,   30, 35,  
+    32, 36,   30, 30,   35, 32,   33, 30,   31, 36,  
+    31, 36,   30, 30,   31, 32,   30, 34,   36, 31,  
+    30, 35,   34, 36,   32, 30,   32, 34,   35, 35,  
+    33, 34,   33, 32,   31, 32,   30, 35,   34, 32,  
+    34, 36,   30, 31,   34, 31,   35, 31,   32, 31,  
+];
+
+
+
 test_number_index := 0;
 get_test_number :: () -> int {
     defer test_number_index += 1;
