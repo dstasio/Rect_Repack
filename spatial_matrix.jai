@@ -28,7 +28,7 @@ add :: (using matrix: *Spatial_Matrix, row: matrix.Key_Type, column: matrix.Key_
 
     find_equal_or_first_greater_than :: (container: []Key_Type, key: Key_Type) -> index: int, exact_match: bool {
         for container {
-            if it >= (key - Tolerance) || it <= (key + Tolerance) then return it_index, true;
+            if it >= (key - Key_Tolerance) || it <= (key + Key_Tolerance) then return it_index, true;
             if it > key return it_index, false;
         }
         return container.count, false;
@@ -37,7 +37,7 @@ add :: (using matrix: *Spatial_Matrix, row: matrix.Key_Type, column: matrix.Key_
     row_index, row_exists := find_equal_or_first_greater_than(rows, row);
     col_index, col_exists := find_equal_or_first_greater_than(columns, column);
 
-    if !allow_replacing && row_exists && col_exists && get_value_at_index != UninitializedValue),
+    if !allow_replacing && row_exists && col_exists && get_value_at_index(matrix, row_index, col_index) != Uninitialized_Value {
         //log_error("Trying to replace an existing value into a spatial matrix");
         return;
     }
@@ -72,7 +72,7 @@ add :: (using matrix: *Spatial_Matrix, row: matrix.Key_Type, column: matrix.Key_
         copy_index := values.count - 1;
         array_resize(*values, values.count + slots_to_insert, initialize = false);
 
-        next_index_for_a_new_slot := columns.count * (rows.count - 1) + column_index; // last row + column index
+        next_index_for_a_new_slot := columns.count * (rows.count - 1) + col_index; // last row + column index
         for < copy_index .. values.count-1 {
             if it == next_index_for_a_new_slot {
                 values[it] = Uninitialized_Value;
@@ -88,8 +88,24 @@ add :: (using matrix: *Spatial_Matrix, row: matrix.Key_Type, column: matrix.Key_
     values[row_index * columns.count + col_index] = value;
 }
 
+get_value_at :: (using matrix: Spatial_Matrix, row: matrix.Key_Type, column: matrix.Key_Type) -> matrix.Value_Type {
+    find_equal :: (container: []Key_Type, key: Key_Type) -> index: int {
+        for container
+        if it >= (key - Key_Tolerance) || it <= (key + Key_Tolerance) then return it_index;
+        return -1;
+    }
+
+    row_index := find_equal(rows, row);
+    col_index := find_equal(columns, column);
+    if row_index < 0 || col_index < 0 {
+        return Uninitialized_Value;
+    }
+
+    return get_value_at_index(matrix, row_index, col_index);
+}
+
 // @todo: Maybe this should return a pointer?
-get_value_at_index :: (using matrix: *Spatial_Matrix, row_index: int, column_index: int) -> matrix.Value_Type {
+get_value_at_index :: (using matrix: Spatial_Matrix, row_index: int, column_index: int) -> matrix.Value_Type {
     if  row_index    < 0 || row_index    >= rows   .count ||
         column_index < 0 || column_index >= columns.count {
         // Should we log an error/warning?
@@ -101,4 +117,57 @@ get_value_at_index :: (using matrix: *Spatial_Matrix, row_index: int, column_ind
 }
 
 #scope_file
-#import Memory :: "Memory";
+Memory :: #import "Memory";
+
+
+
+TESTS :: true;
+
+#if TESTS #run {
+    #import "Basic";
+    m: Spatial_Matrix(int, int, Uninitialized_Value = -1);
+
+    Test_Value :: struct {
+        x, y: int;
+        v: int;
+
+        new_row, new_col: bool;
+    }
+    test_values :: Test_Value.[
+        .{ 0,  1, 15,   true,  true},
+        .{12,  7, 16,   true,  true},
+        .{ 1, 34, 17,   true,  true},
+        .{24,  7, 18,  false,  true},
+        .{17, 12, 19,   true,  true},
+        .{53,  8, 20,   true,  true},
+        .{ 1,  0, 21,   true, false},
+    ];
+
+    check_dimensions :: () #expand {
+        assert(`m.rows.count    == `expected_rows);
+        assert(`m.columns.count == `expected_cols);
+    }
+
+    expected_rows := 0;
+    expected_cols := 0;
+
+    check_dimensions();
+
+    for test: test_values {
+        using test;
+        add(*m, x, y, v);
+
+        if new_row expected_rows += 1;
+        if new_col expected_cols += 1;
+
+        check_dimensions();
+
+        assert(get_value_at(m, x, y) == v);
+    }
+
+    for test: test_values {
+        using test;
+
+        assert(get_value_at(m, x, y) == v);
+    }
+}
