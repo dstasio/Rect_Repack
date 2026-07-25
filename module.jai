@@ -1,3 +1,7 @@
+// Version 0
+
+#module_parameters (Row_User_Data_Type := u16);
+
 Rect_Pack :: struct {
     width:       s32;
     height:      s32;
@@ -8,11 +12,14 @@ Rect_Pack :: struct {
 }
 
 Rect_Row :: struct {
+    user_data  : Row_User_Data_Type;
+
     // Maybe we don't need to store y.
     y          : u16;
     height     : u16;
     used_width : u16;
 }
+#run print("size: %\n", size_of(Rect_Row));
 
 init_rect_pack :: (width_: s32, height_: s32, minimum_row_height_ := 0) -> Rect_Pack {
     using pack: Rect_Pack;
@@ -52,6 +59,9 @@ add_rect :: (using pack: *Rect_Pack, rect_w: int, rect_h: int) -> success := fal
         selected_row.y          = maximum_used_y;
         selected_row.height     = max(rect_h, minimum_row_height).(u16);
         selected_row.used_width = 0;
+
+        user_data_default: Row_User_Data_Type;
+        selected_row.user_data  = user_data_default;
     }
 
     x : int = selected_row.used_width;
@@ -63,7 +73,7 @@ add_rect :: (using pack: *Rect_Pack, rect_w: int, rect_h: int) -> success := fal
 }
 
 clear_row :: (using pack: Rect_Pack, row_index: int) {
-    rows.rows[row_index].used_width = 0;
+    rows[row_index].used_width = 0;
 }
 
 #scope_file
