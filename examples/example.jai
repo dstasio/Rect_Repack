@@ -4,11 +4,10 @@ my_window: Window_Type;
 window_width  : s32 = 1920;
 window_height : s32 = 1920;
 
-atlas: Atlas;
 
 main :: () {
-    //atlas = make_atlas(128, 128);
-    atlas = make_atlas(1024, 1024);
+    //pack = init_rect_pack(128, 128);
+    pack = init_rect_pack(1024, 1024);
 
     context.input_handler.window_proc = Input.MyWindowProc;
 
@@ -59,9 +58,6 @@ main :: () {
                     iter.can_complete = true;
                     iter.can_advance  = true;
                 }
-                if it.key_pressed && it.key_code == #char "F" {
-                    iter.draw_fill_mask = !iter.draw_fill_mask;
-                }
             }
         }
 
@@ -70,6 +66,11 @@ main :: () {
         sleep_milliseconds(10);
         reset_temporary_storage();
     }
+}
+
+Iter_State__ :: struct {
+    can_advance  := false;
+    can_complete := false;
 }
 
 iter: Iter_State__;
@@ -89,21 +90,45 @@ draw_one_frame :: () {
 
     time := seconds_since_init();
 
-    if current_rect.w == 0 {
-        current_rect.w = get_test_number();
-        current_rect.h = get_test_number();
-        print("Packing a rectangle of size %x%\n", current_rect.w, current_rect.h);
-    }
-    success:, current_rect.x, current_rect.y = add_rect(*atlas, current_rect.w, current_rect.h, *iter);
+    if iter.can_advance {
+        #if 0 {
+            array_reset_keeping_memory(*placed_rects);
+            array_reserve(*placed_rects, 1024);
+            array_reset_keeping_memory(*pack.rows);
 
-    if success {
+            ta := current_time_monotonic();
+
+            while true {
+                current_rect.w = get_test_number();
+                current_rect.h = get_test_number();
+
+                success:, current_rect.x, current_rect.y = add_rect(*pack, current_rect.w, current_rect.h);
+                if success array_add(*placed_rects, current_rect);
+                else break;
+            }
+
+            tb := current_time_monotonic();
+            delta := tb - ta;
+            print("Packed % rectangles in % ns.\n", placed_rects.count, to_nanoseconds(delta));
+        } else {
+            current_rect.w = get_test_number();
+            current_rect.h = get_test_number();
+            print("Packing a rectangle of size %x%\n", current_rect.w, current_rect.h);
+
+            success:, current_rect.x, current_rect.y = add_rect(*pack, current_rect.w, current_rect.h);
+            if success array_add(*placed_rects, current_rect);
+            iter.can_advance = false;
+        }
+    }
+
+    /* if success {
         array_add(*placed_rects, current_rect);
         current_rect.w = get_test_number();
         current_rect.h = get_test_number();
         print("Packing a rectangle of size %x%\n", current_rect.w, current_rect.h);
-    }
+    } */
 
-    pixel_render_size = cast(float, min(window_width, window_height)) / atlas.width;
+    pixel_render_size = cast(float, min(window_width, window_height)) / pack.width;
 
     draw_pixels :: (x: int, y: int, w := 1, h := 1, color := Vector4.{0.2, 0.5, 0.8, 0.3}, alpha_multiplier := 1.0) {
         x0 := x  * pixel_render_size;
@@ -111,65 +136,26 @@ draw_one_frame :: () {
         y0 := y  * pixel_render_size;
         y1 := y0 + pixel_render_size * h;
 
-        pixel := atlas.pixels[y * atlas.width + x];
-
         c := color;
-        c.x -= pixel / 256.0;
-        c.y -= pixel / 512.0;
         c.w *= alpha_multiplier;
         Simp.immediate_quad(x0, y0, x1, y1, c);
     }
  
     grid_color := Vector4.{0.2, 0.2, 0.2, 0.1};
 
-    for 0..max(atlas.width, atlas.height)-1 {
+    for 0..max(pack.width, pack.height)-1 {
         p0 := Vector2.{it * pixel_render_size, 0};
-        p1 := p0 + Vector2.{0, pixel_render_size * atlas.height};
+        p1 := p0 + Vector2.{0, pixel_render_size * pack.height};
         draw_line(p0, p1, grid_color, 1);
 
         p0.x, p0.y = p0.y, p0.x;
         p1.x, p1.y = p1.y, p1.x;
         draw_line(p0, p1, grid_color, 1);
     }
-    for atlas.fill_matrix.columns {
-        p0 := Vector2.{it * pixel_render_size, 0};
-        p1 := p0 + Vector2.{0, pixel_render_size * atlas.height};
-        draw_line(p0, p1, grid_color, 2);
-    }
-    for atlas.fill_matrix.rows {
-        p0 := Vector2.{0, it * pixel_render_size};
-        p1 := p0 + Vector2.{pixel_render_size * atlas.width, 0};
-        draw_line(p0, p1, grid_color, 2);
-    }
 
     for placed_rects {
         color := test_colors[it_index % test_colors.count];
         draw_pixels(it.x, it.y, it.w, it.h, color, 0.5);
-    }
-
-    if iter.draw_fill_mask for row: 0..atlas.fill_matrix.rows.count-2 {
-        for col: 0..atlas.fill_matrix.columns.count-2 {
-            v := atlas.fill_matrix[row][col];
-
-            if v != .Full
-                continue;
-
-            color := Vector4.{0.2, 0.1, .1, 0.5};
-            
-            x0 := atlas.fill_matrix.columns[col];
-            y0 := atlas.fill_matrix.rows   [row];
-            x1 := atlas.fill_matrix.columns[col + 1];
-            y1 := atlas.fill_matrix.rows   [row + 1];
-
-            draw_pixels(x0, y0, x1 - x0, y1 - y0, color);
-        }
-    }
-
-    {
-        using iter;
-        color := Vector4.{0.741, 0.243, 0.204, 1};
-        if !iter.restarting swap(*color.x, *color.z);
-        draw_quad_outline(region.x0, region.y0, region.x1, region.y1, color);
     }
 
 
@@ -303,6 +289,9 @@ test_numbers :: int.[
 
 test_number_index := 0;
 get_test_number :: () -> int {
-    defer test_number_index += 1;
+    defer {
+        test_number_index += 1;
+        if test_number_index >= test_numbers.count then test_number_index -= test_numbers.count;
+    }
     return test_numbers[test_number_index];
 }
