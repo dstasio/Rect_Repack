@@ -19,7 +19,6 @@ Rect_Row :: struct {
     height     : u16;
     used_width : u16;
 }
-#run print("size: %\n", size_of(Rect_Row));
 
 init_rect_pack :: (width_: s32, height_: s32, minimum_row_height_ := 0) -> Rect_Pack {
     using pack: Rect_Pack;
