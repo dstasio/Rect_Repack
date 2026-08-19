@@ -33,7 +33,7 @@ init_rect_pack :: (width_: s32, height_: s32, minimum_row_height_ := 0) -> Rect_
 }
 
 add_rect :: (using pack: *Rect_Pack, rect_w: int, rect_h: int) -> success := false, x := 0, y := 0, row_index := 0 {
-    assert(rect_w < width);
+    assert(rect_w < width, "Tried to pack a rectangle that is bigger than the atlas. rect_w: %  vs  atlas_w: %.", rect_w, width);
 
     maximum_used_y: u16;
 
